@@ -507,25 +507,6 @@ static int sec_jack_remove(struct platform_device *pdev)
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int sec_jack_suspend(struct platform_device *pdev, pm_message_t state)
-{
-	SEC_JACKDEV_DBG("");
-	flush_scheduled_work();
-	return 0;
-}
-static int sec_jack_resume(struct platform_device *pdev)
-{
-	SEC_JACKDEV_DBG("");
-	schedule_work(&jack_detect_work);
-	schedule_work(&sendend_switch_work);
-	return 0;
-}
-#else
-#define s3c_headset_resume	NULL
-#define s3c_headset_suspend	NULL
-#endif
-
 static int __init sec_jack_init(void)
 {
 	SEC_JACKDEV_DBG("");
@@ -537,14 +518,37 @@ static void __exit sec_jack_exit(void)
 	platform_driver_unregister(&sec_jack_driver);
 }
 
+#ifdef CONFIG_PM
+static int sec_jack_suspend(struct device *dev)
+{
+	SEC_JACKDEV_DBG("");
+	flush_scheduled_work();
+	return 0;
+}
+
+static int sec_jack_resume(struct device *dev)
+{
+	SEC_JACKDEV_DBG("");
+	schedule_work(&jack_detect_work);
+	schedule_work(&sendend_switch_work);
+	return 0;
+}
+
+static const struct dev_pm_ops sec_jack_pm_ops = {
+	.suspend	= sec_jack_suspend,
+	.resume		= sec_jack_resume,
+};
+#endif
+
 static struct platform_driver sec_jack_driver = {
 	.probe = sec_jack_probe,
 	.remove = sec_jack_remove,
-	.suspend = sec_jack_suspend,
-	.resume = sec_jack_resume,
 	.driver = {
 		.name = "sec_jack",
 		.owner = THIS_MODULE,
+#ifdef CONFIG_PM
+		.pm	= &sec_jack_pm_ops,
+#endif
 	},
 };
 
