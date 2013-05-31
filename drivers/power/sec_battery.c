@@ -47,9 +47,6 @@
 #include <linux/android_alarm.h>
 #include <mach/regs-clock.h>
 #include <asm/io.h>
-#ifdef CONFIG_FAST_CHARGE
-#include <linux/fast_charge.h>
-#endif
 
 #define TEMPERATURE_FROM_FUELGAUGE
 
@@ -146,6 +143,8 @@ struct chg_data {
 #endif
 };
 
+static bool disable_charger;
+
 static char *supply_list[] = {
 	"battery",
 };
@@ -198,6 +197,7 @@ static struct device_attribute sec_battery_attrs[] = {
 #ifdef BATTERY_CURRENT
 	SEC_BATTERY_ATTR(batt_current),
 #endif
+    SEC_BATTERY_ATTR(disable_charger),
 };
 
 
@@ -761,25 +761,11 @@ static bool check_samsung_charger(void)
 		pr_info("%s: vol_1 = %d, vol_2 = %d!!\n", __func__, vol_1, vol_2);
 
 		//3. Check range of the voltage
-#ifdef CONFIG_FAST_CHARGE
-        if ( enable_fast_charge == 1 ) {
-            pr_info("%s: Samsung USB charger is connected!!!\n", __func__);
-            fsa9480_manual_switching(AUTO_SWITCH);
-            return true;       
-        } else {
-            if( (vol_1 < 800) || (vol_1 > 1470) || (vol_2 < 800) || (vol_2 > 1470) ) {
-                pr_info("%s: Improper charger is connected!!!\n", __func__);
-                fsa9480_manual_switching(AUTO_SWITCH);
-                return false;
-            }
-        }
-#else
 	    if( (vol_1 < 800) || (vol_1 > 1470) || (vol_2 < 800) || (vol_2 > 1470) ) {
 		    pr_info("%s: Improper charger is connected!!!\n", __func__);
 		    fsa9480_manual_switching(AUTO_SWITCH);
 		    return false;
 	    }
-#endif
     } //for ( i=0; i<3; i++)
 
 	pr_info("%s: Samsung charger is connected!!!\n", __func__);
@@ -854,7 +840,7 @@ static int sec_cable_status_update(struct chg_data *chg)
 	    chg->pdata->pmic_charger->get_connection_status())
 	{
 		vdc_status = true;
-		if (chg->bat_info.dis_reason) {
+		if (chg->bat_info.dis_reason || disable_charger) {
 			//pr_info("%s : battery status discharging : %d\n", __func__, chg->bat_info.dis_reason);
 			/* have vdcin, but cannot charge */
 			chg->charging = false;
@@ -915,14 +901,7 @@ update:
 	    chg->bat_info.charging_status == POWER_SUPPLY_STATUS_CHARGING) {
 		/* Update DISCHARGING status in case of USB cable or Improper charger */
 		if(chg->cable_status==CABLE_TYPE_USB || chg->bat_info.batt_improper_ta) {
-#ifdef CONFIG_FAST_CHARGE
-			if ( enable_fast_charge == 1 )
-				chg->bat_info.charging_status = POWER_SUPPLY_STATUS_CHARGING;
-			else
-				chg->bat_info.charging_status = POWER_SUPPLY_STATUS_DISCHARGING;
-#else
-    			chg->bat_info.charging_status = POWER_SUPPLY_STATUS_DISCHARGING;
-#endif
+			chg->bat_info.charging_status = POWER_SUPPLY_STATUS_DISCHARGING;
         }
 	}
 
@@ -1034,6 +1013,10 @@ static ssize_t sec_bat_show_attrs(struct device *dev,
 		}
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", chg->bat_info.batt_soc);
 		break;
+
+    case DISABLE_CHARGER:
+        i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", disable_charger);
+        break;
 
 #ifdef CONFIG_BATTERY_MAX17042
 	case BATT_FG_CHECK:
@@ -1165,6 +1148,13 @@ static ssize_t sec_bat_store_attrs(struct device *dev, struct device_attribute *
 		}
 		break;
 #endif
+
+    case DISABLE_CHARGER:
+        if (sscanf(buf, "%d\n", &x) == 1) {
+            disable_charger = x;
+            ret = count;
+        }
+        break;
 
 	default:
 		ret = -EINVAL;
@@ -1323,6 +1313,7 @@ static __devinit int sec_battery_probe(struct platform_device *pdev)
 	queue_work(chg->monitor_wqueue, &chg->bat_work);
 
 	p1_lpm_mode_check(chg);
+    disable_charger = 0;
 
 	return 0;
 
@@ -1396,6 +1387,7 @@ static const struct dev_pm_ops sec_battery_pm_ops = {
 static struct platform_driver sec_battery_driver = {
 	.driver = {
 		.name = "sec_battery",
+		.owner = THIS_MODULE,
 		.pm = &sec_battery_pm_ops,
 	},
 	.probe = sec_battery_probe,
